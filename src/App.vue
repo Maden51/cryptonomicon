@@ -27,7 +27,7 @@
                 </div>
                 <div class="flex bg-white p-1 rounded-md shadow-md flex-wrap">
                   <span v-for="index in 4" :key="index" class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
-                    {{prices[index]?.FullName}}
+                    {{prices?.FullName}}
                   </span>
                 </div>
                 <div v-if="error.boolean" class="text-sm text-red-600">{{error.name}}</div>
@@ -53,6 +53,17 @@
               </svg>
               Добавить
             </button>
+            <div>
+              <button v-if="currentPage > 1" @click="currentPage = currentPage - 1" class="my-4 mr-3 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+              >
+                Назад
+              </button>
+              <button v-if="hasNextPage" @click="currentPage = Number(currentPage) + 1" class="my-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+              >
+                Вперёд
+              </button>
+              <p><b class="mr-3">Фильтр:</b> <input v-model="filter" /></p>
+            </div>
       </section>
       <template v-if="tickers.length">
             <hr class="w-full border-t border-gray-600 my-4" />
@@ -61,7 +72,7 @@
                 @click="select(t)"
                 :class="selected === t ? 'border-4' : ''"
                 class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
-                v-for="t in tickers"
+                v-for="t in filteredTickers()"
                 :key="t"
               >
                 <div class="px-4 py-5 sm:p-6 text-center">
@@ -150,21 +161,58 @@ export default {
       error: {error: '', boolean: false},
       prices: [],
       loading: true,
+      currentPage: 1,
+      filter: '',
+      hasNextPage: false,
     }
   },
 
-  created() {
-    this.loading = true
-    fetch('https://min-api.cryptocompare.com/data/all/coinlist?summary=true')
-      .then(res => res.json())
-      .then(data => {
-        this.prices = [data.Data];
-        this.loading = false;
-        console.log(this.prices)
-        })
+  async created() {
+    const windowData = Object.fromEntries(new URL(window.location).searchParams.entries());
+    if (windowData.filter) {
+      this.filter = windowData.filter
+    }
+    if (windowData.page) {
+      this.currentPage = windowData.page
+    }
+
+    this.loading = true;
+    const storagedStickers = localStorage.getItem('tickers');
+    if(storagedStickers) {
+      this.tickers = JSON.parse(storagedStickers);
+      this.tickers.forEach((ticker) => {
+        this.subscribeToUpdates(ticker.name);
+      })
+    }
+    const f = await fetch('https://min-api.cryptocompare.com/data/all/coinlist?summary=true')
+    const data = f.json();
+    this.prices = {...data.data};
+    this.loading = false;
   },
 
   methods: {
+    filteredTickers() {
+      const start = (this.currentPage - 1) * 6;
+      const end = this.currentPage * 6;
+      const filteredTickers = this.tickers.filter(ticker => {
+        return ticker?.name.toLowerCase().includes(this.filter.toLowerCase())
+      });
+      this.hasNextPage = filteredTickers.length > end;
+      return filteredTickers.slice(start, end)
+    },
+
+    subscribeToUpdates(tickerName) {
+      setInterval(async() => {
+          const f = await fetch(`https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_ley=2b1511ce85a9a6db2cd89c77c8180ab1ef39f3e2d70d97a9f4a343686bbdf7ce`);
+          const data = await f.json();
+          this.tickers.find(t => t.name === tickerName).price = data?.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
+
+          if(this.selected?.name === tickerName) {
+            this.graph.push(data.USD);
+          }
+      }, 3000)
+    },
+
     addTicker() {
       const newTicker = {name: this.ticker.toUpperCase(), price: '-'};
       if (this.ticker === '') {
@@ -173,18 +221,11 @@ export default {
         this.error = {name: 'Такой тикер уже есть', boolean: true};
       } else {
         this.tickers.push(newTicker);
+        localStorage.setItem('tickers', JSON.stringify(this.tickers));
         this.error = {name: '', boolean: false};
         this.ticker = '';
-
-        setInterval(async() => {
-          const f = await fetch(`https://min-api.cryptocompare.com/data/price?fsym=${newTicker.name}&tsyms=USD&api_ley=2b1511ce85a9a6db2cd89c77c8180ab1ef39f3e2d70d97a9f4a343686bbdf7ce`);
-          const data = await f.json();
-          this.tickers.find(t => t.name === newTicker.name).price = data?.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-
-          if(this.selected?.name === newTicker.name) {
-            this.graph.push(data.USD);
-          }
-        }, 3000)
+        this.filter = '';
+        this.subscribeToUpdates(newTicker.name)
       }
     },
     select(ticker) {
@@ -202,12 +243,30 @@ export default {
     }
   },
 
-  computed: {
-    filteredTickers() {
-      return this.prices.filter(ticker => {
-        return ticker.Name.toLowerCase().includes(this.ticker.toLowerCase())
-      })
+  watch: {
+    filter() {
+      this.currentPage = 1;
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${this.filter}&page=${this.currentPage}`
+      );
+    },
+    currentPage() {
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${this.filter}&page=${this.currentPage}`
+      );
     }
   }
+
+  // computed: {
+  //   filteredTickers() {
+  //     return this.prices.filter(ticker => {
+  //       return ticker.Name.toLowerCase().includes(this.ticker.toLowerCase())
+  //     })
+  //   }
+  // }
 }
 </script>
