@@ -72,7 +72,7 @@
                 @click="select(t)"
                 :class="selected === t ? 'border-4' : ''"
                 class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
-                v-for="t in filteredTickers()"
+                v-for="t in paginatedTickers"
                 :key="t"
               >
                 <div class="px-4 py-5 sm:p-6 text-center">
@@ -111,7 +111,7 @@
             </h3>
             <div class="flex items-end border-gray-600 border-b border-l h-64">
               <div
-                v-for="(bar, idx) in normalizeGraph()"
+                v-for="(bar, idx) in normalizedGraph"
                 v-bind:key="idx"
                 :style="{ height: `${bar}%`}"
                 class="bg-purple-800 border w-10 h-24"
@@ -155,15 +155,19 @@ export default {
   data() {
     return {
       ticker: '',
+      filter: '',
+      
       tickers: [],
       selected: null,
+
       graph: [],
-      error: {error: '', boolean: false},
+
       prices: [],
+
+      error: {error: '', boolean: false},
       loading: true,
+
       currentPage: 1,
-      filter: '',
-      hasNextPage: false,
     }
   },
 
@@ -190,17 +194,48 @@ export default {
     this.loading = false;
   },
 
-  methods: {
-    filteredTickers() {
-      const start = (this.currentPage - 1) * 6;
-      const end = this.currentPage * 6;
-      const filteredTickers = this.tickers.filter(ticker => {
-        return ticker?.name.toLowerCase().includes(this.filter.toLowerCase())
-      });
-      this.hasNextPage = filteredTickers.length > end;
-      return filteredTickers.slice(start, end)
+  computed: {
+    startIndex() {
+      return (this.currentPage - 1) * 6
     },
 
+    endIndex() {
+      return this.currentPage * 6
+    },
+
+    filteredTickers() {
+      return this.tickers.filter(ticker => {
+        return ticker?.name.toLowerCase().includes(this.filter.toLowerCase())
+      });
+    },
+
+    hasNextPage() {
+      return this.filteredTickers.length > this.endIndex
+    },
+
+    paginatedTickers() {
+      return this.filteredTickers.slice(this.startIndex, this.endIndex)
+    },
+
+    normalizedGraph() {
+      const maxValue = Math.max(...this.graph);
+      const minValue = Math.min(...this.graph);
+      if(maxValue === minValue) {
+        return this.graph.map(() => 50)
+      }
+      return this.graph.map(price => 
+      5 + (price - minValue) / (maxValue - minValue) * 95)
+    },
+
+    pageStateOption() {
+      return {
+        filter: this.filter,
+        page: this.currentPage
+      }
+    }
+  },
+
+  methods: {
     subscribeToUpdates(tickerName) {
       setInterval(async() => {
           const f = await fetch(`https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_ley=2b1511ce85a9a6db2cd89c77c8180ab1ef39f3e2d70d97a9f4a343686bbdf7ce`);
@@ -220,8 +255,7 @@ export default {
       } else if (this.tickers.find(t => t.name.toUpperCase() === newTicker.name.toUpperCase())) {
         this.error = {name: 'Такой тикер уже есть', boolean: true};
       } else {
-        this.tickers.push(newTicker);
-        localStorage.setItem('tickers', JSON.stringify(this.tickers));
+        this.tickers = [...this.tickers, newTicker];
         this.error = {name: '', boolean: false};
         this.ticker = '';
         this.filter = '';
@@ -230,43 +264,41 @@ export default {
     },
     select(ticker) {
       this.selected = ticker;
-      this.graph = [];
     },
     deleteTicker(tickerToDelete) {
       this.tickers = this.tickers.filter(t => t != tickerToDelete)
+      if(this.selected === tickerToDelete) {
+        this.selected = null;
+      }
     },
-    normalizeGraph() {
-      const maxValue = Math.max(...this.graph);
-      const minValue = Math.min(...this.graph);
-      return this.graph.map(price => 
-      5 + (price - minValue) / (maxValue - minValue) * 95)
-    }
   },
 
   watch: {
+    tickers() {
+      localStorage.setItem('tickers', JSON.stringify(this.tickers));
+    },
+
+    selected() {
+      this.graph = [];
+    },
+
+    paginatedTickers() {
+      if(this.paginatedTickers.length === 0 && this.currentPage > 1) {
+        this.currentPage -= 1;
+      }
+    },
+
     filter() {
       this.currentPage = 1;
-      window.history.pushState(
-        null,
-        document.title,
-        `${window.location.pathname}?filter=${this.filter}&page=${this.currentPage}`
-      );
     },
-    currentPage() {
+    
+    pageStateOption(value) {
       window.history.pushState(
         null,
         document.title,
-        `${window.location.pathname}?filter=${this.filter}&page=${this.currentPage}`
+        `${window.location.pathname}?filter=${value.filter}&page=${value.page}`
       );
     }
   }
-
-  // computed: {
-  //   filteredTickers() {
-  //     return this.prices.filter(ticker => {
-  //       return ticker.Name.toLowerCase().includes(this.ticker.toLowerCase())
-  //     })
-  //   }
-  // }
 }
 </script>
